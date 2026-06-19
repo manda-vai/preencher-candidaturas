@@ -1,0 +1,66 @@
+{
+  "manifest_version": 3,
+  "name": "Preenchimento Rápido - Candidaturas",
+  "version": "1.0.0",
+  "description": "Preenche automaticamente formulários de candidatura em sites como InHire, Gupy, 99Jobs, Solides, Recrut.AI e outros.",
+  "author": "HermesCoder",
+  "homepage_url": "https://github.com/manda-vai/preencher-candidaturas",
+
+  "permissions": [
+    "storage",
+    "activeTab"
+  ],
+
+  "host_permissions": ["<all_urls>"],
+
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_title": "Preenchimento Rápido",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": [
+        "lib/field-dictionary.js",
+        "content/field-matcher.js",
+        "content/content.js"
+      ],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ],
+
+  "background": {
+    "service_worker": "background/background.js",
+    "type": "module"
+  },
+
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+
+  "commands": {
+    "fill-form": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+F",
+        "mac": "Command+Shift+F"
+      },
+      "description": "Preencher formulário com o perfil ativo"
+    }
+  },
+
+  "web_accessible_resources": [
+    {
+      "resources": ["lib/*", "content/*"],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}
