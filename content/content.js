@@ -145,17 +145,35 @@
         return;
       }
 
-      // 4. Preview se configurado
+      // 4. Expande dados do perfil com fallbacks inteligentes
+      const fillData = { ...profile.data };
+      
+      // Fallback: se tem nome+sobrenome mas não nomeCompleto, combina
+      if (!fillData.nomeCompleto && fillData.nome && fillData.sobrenome) {
+        fillData.nomeCompleto = `${fillData.nome} ${fillData.sobrenome}`.trim();
+      }
+      // Fallback: se tem nomeCompleto mas não nome, tenta extrair primeiro nome
+      if (!fillData.nome && fillData.nomeCompleto) {
+        const parts = fillData.nomeCompleto.trim().split(/\s+/);
+        if (parts.length > 0) fillData.nome = parts[0];
+      }
+      // Fallback: se tem nomeCompleto mas não sobrenome, tenta extrair
+      if (!fillData.sobrenome && fillData.nomeCompleto) {
+        const parts = fillData.nomeCompleto.trim().split(/\s+/);
+        if (parts.length > 1) fillData.sobrenome = parts.slice(1).join(' ');
+      }
+
+      // 5. Preview se configurado
       if (settings.confirmBeforeFill) {
-        const confirmed = await showFillPreview(fields, profile.data);
+        const confirmed = await showFillPreview(fields, fillData);
         if (!confirmed) return;
       }
 
-      // 5. Preenche
+      // 6. Preenche
       let filledCount = 0;
       for (const field of fields) {
         const key = field.bestMatch.key;
-        const value = profile.data[key];
+        const value = fillData[key];
         
         if (value !== undefined && value !== null && value !== '') {
           // Delay entre campos pra evitar detecção anti-bot

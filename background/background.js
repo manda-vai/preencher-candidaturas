@@ -62,6 +62,8 @@ function createEmptyProfile(label) {
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     data: {
+      nome: '',
+      sobrenome: '',
       nomeCompleto: '',
       email: '',
       telefone: '',
