@@ -273,7 +273,12 @@ const FieldMatcher = (() => {
       } else if (type === 'file') {
         return false; // File inputs cannot be auto-filled programmatically
       } else {
-        return fillTextual(element, value);
+        var result = fillTextField(element, value);
+        // Tratamento especial para intl-tel-input
+        if (type === 'tel' || type === 'phone') {
+          handleIntlTelInput(element, value);
+        }
+        return result;
       }
     } catch (e) {
       console.warn('[PreenchimentoRapido] Erro ao preencher campo:', element, e);
@@ -281,7 +286,7 @@ const FieldMatcher = (() => {
     }
   }
 
-  function fillTextual(element, value) {
+  function fillTextField(element, value) {
     // Para react/vue/angular, disparar eventos apropriados
     const nativeSetter = Object.getOwnPropertyDescriptor(
       window.HTMLInputElement.prototype, 'value'
@@ -304,6 +309,40 @@ const FieldMatcher = (() => {
     element.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
     
     return true;
+  }
+
+  // ─── INTL-TEL-INPUT (código internacional) ─────────────────────
+  function handleIntlTelInput(element, value) {
+    const container = element.closest('.iti');
+    if (!container) return false;
+
+    // Tenta acessar a instância do plugin intl-tel-input
+    // O plugin armazena a instância em _it, _intlTelInput, ou via jQuery.data
+    let iti = element._it || element._intlTelInput;
+    if (!iti && typeof jQuery !== 'undefined') {
+      try { iti = jQuery.data(element, 'intl-tel-input'); } catch (e) {}
+    }
+
+    // Se encontrou a instância, usa setNumber que já atualiza
+    // o dropdown, bandeira e código do país automaticamente
+    if (iti && typeof iti.setNumber === 'function') {
+      iti.setNumber(value);
+      return true;
+    }
+
+    // Fallback: força a biblioteca a re-parsear o valor
+    element.dispatchEvent(new KeyboardEvent('keyup', {
+      bubbles: true,
+      key: 'Backspace',
+      keyCode: 8
+    }));
+    element.dispatchEvent(new InputEvent('input', {
+      bubbles: true,
+      inputType: 'insertText',
+      data: value.slice(-1)
+    }));
+
+    return false;
   }
 
   function fillSelect(element, value) {

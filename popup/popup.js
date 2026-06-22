@@ -226,6 +226,10 @@
 
       profile.label = label;
       profile.data = data;
+      // Monta nomeCompleto automaticamente de nome + sobrenome
+      if (!data.nomeCompleto && data.nome && data.sobrenome) {
+        profile.data.nomeCompleto = `${data.nome} ${data.sobrenome}`.trim();
+      }
       profile.templates = templates;
       profile.updatedAt = new Date().toISOString();
 
