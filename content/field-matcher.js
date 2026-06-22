@@ -75,6 +75,30 @@ const FieldMatcher = (() => {
       if (labelChild) return labelChild.textContent;
     }
 
+    // 8. SurveyJS / custom form builders: .sv_q_title em container sv_q
+    parent = el.closest('.sv_q, [class*="sv_q"], [class*="question"], [class*="form-builder"]');
+    if (parent) {
+      const titleEl = parent.querySelector(
+        '.sv_q_title, [class*="question-title"], [class*="field-label"], ' +
+        '[class*="title-text"], [class*="question-text"]'
+      );
+      if (titleEl && titleEl.textContent.trim()) return titleEl.textContent.trim();
+    }
+
+    // 9. Generic fallback: qualquer div/span com texto antes do input no mesmo container
+    parent = el.parentElement?.parentElement;
+    if (parent && parent !== document.body) {
+      for (const child of parent.children) {
+        if (child !== el.parentElement &&
+            ['DIV', 'SPAN', 'LABEL', 'P', 'H1','H2','H3','H4'].includes(child.tagName) &&
+            child.textContent.trim() &&
+            !child.querySelector('input, select, textarea')) {
+          const txt = child.textContent.trim();
+          if (txt.length > 3 && txt.length < 200) return txt;
+        }
+      }
+    }
+
     return '';
   }
 
@@ -87,7 +111,7 @@ const FieldMatcher = (() => {
     for (const attr of attrs) {
       const val = el.getAttribute(attr);
       if (val) {
-        // Para name/id, usar o valor direto e também separar por hífen/underscore/camelCase
+        // Para name/id, usar o valor direto e também separar por hífen/underscore
         signals.add(val);
         val.split(/[-_]/).forEach(s => signals.add(s));
       }
@@ -108,7 +132,6 @@ const FieldMatcher = (() => {
     const labelText = getLabelText(el);
     if (labelText) {
       signals.add(labelText);
-      // Placeholder text é útil
     }
 
     // Data attributes genéricos
@@ -119,10 +142,14 @@ const FieldMatcher = (() => {
       }
     }
 
-    // Parent container hints
-    let container = el.closest('[class*="form"], [class*="field"], [id*="field"]');
+    // Parent container hints - expandido para SurveyJS e outros builders
+    let container = el.closest(
+      '[class*="form"], [class*="field"], [id*="field"], ' +
+      '[class*="sv_q"], [class*="question"], [class*="survey"], ' +
+      '[class*="application"], [class*="candidate"]'
+    );
     if (container) {
-      const text = container.textContent.trim().slice(0, 100);
+      const text = container.textContent.trim().slice(0, 120);
       if (text) signals.add(text);
     }
 
