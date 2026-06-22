@@ -115,6 +115,10 @@
 
   // ─── CRUD PERFIS ───────────────────────────────────────────────
   async function addProfile() {
+    if (typeof FIELD_DICTIONARY === 'undefined') {
+      showSaveStatus('❌ Erro: dicionário de campos não carregado.', 'warning');
+      return;
+    }
     const count = currentProfiles.length + 1;
     const newProfile = {
       id: 'profile_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
@@ -182,44 +186,56 @@
     if (isSaving) return;
     isSaving = true;
 
-    const label = fieldLabel.value.trim();
-    if (!label) {
-      showSaveStatus('⚠️ Defina um nome para o perfil.', 'warning');
-      fieldLabel.focus();
-      isSaving = false;
-      return;
-    }
+    try {
+      const label = fieldLabel.value.trim();
+      if (!label) {
+        showSaveStatus('⚠️ Defina um nome para o perfil.', 'warning');
+        fieldLabel.focus();
+        isSaving = false;
+        return;
+      }
 
-    const profile = currentProfiles.find(p => p.id === currentProfileId);
-    if (!profile) {
-      isSaving = false;
-      return;
-    }
+      const profile = currentProfiles.find(p => p.id === currentProfileId);
+      if (!profile) {
+        showSaveStatus('⚠️ Nenhum perfil selecionado.', 'warning');
+        isSaving = false;
+        return;
+      }
 
-    // Coleta dados do formulário
-    const data = {};
-    for (const entry of FIELD_DICTIONARY) {
-      const el = $(`f-${entry.key}`);
-      if (el) {
-        if (el.type === 'checkbox') {
-          data[entry.key] = el.checked;
-        } else {
-          data[entry.key] = el.value.trim();
+      if (typeof FIELD_DICTIONARY === 'undefined') {
+        showSaveStatus('❌ Erro: dicionário de campos não carregado.', 'warning');
+        isSaving = false;
+        return;
+      }
+
+      // Coleta dados do formulário
+      const data = {};
+      for (const entry of FIELD_DICTIONARY) {
+        const el = $(`f-${entry.key}`);
+        if (el) {
+          if (el.type === 'checkbox') {
+            data[entry.key] = el.checked;
+          } else {
+            data[entry.key] = el.value.trim();
+          }
         }
       }
+
+      // Coleta templates
+      const templates = collectTemplates();
+
+      profile.label = label;
+      profile.data = data;
+      profile.templates = templates;
+      profile.updatedAt = new Date().toISOString();
+
+      await chrome.storage.sync.set({ profiles: currentProfiles });
+      renderProfileList();
+      showSaveStatus('✅ Salvo!', 'success');
+    } catch (err) {
+      console.error('[PreenchimentoRapido] Erro ao salvar:', err);
+      showSaveStatus('❌ Erro ao salvar: ' + err.message, 'warning');
     }
-
-    // Coleta templates
-    const templates = collectTemplates();
-
-    profile.label = label;
-    profile.data = data;
-    profile.templates = templates;
-    profile.updatedAt = new Date().toISOString();
-
-    await chrome.storage.sync.set({ profiles: currentProfiles });
-    renderProfileList();
-    showSaveStatus('✅ Salvo!', 'success');
 
     isSaving = false;
   }
@@ -477,6 +493,7 @@
 
   // ─── UTILITIES ─────────────────────────────────────────────────
   function createEmptyData() {
+    if (typeof FIELD_DICTIONARY === 'undefined') return {};
     const data = {};
     for (const entry of FIELD_DICTIONARY) {
       data[entry.key] = entry.type === 'checkbox' ? false : '';
