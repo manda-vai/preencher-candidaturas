@@ -2,11 +2,11 @@
  * popup.js
  * 
  * Interface do popup da extensão. Gerencia:
- * - CRUD de perfis
+ * - CRUD de perfis (via STORAGE wrapper → chrome.storage.local)
  * - Formulário de dados do candidato
  * - Templates de resposta
  * - Histórico de candidaturas
- * - Configurações
+ * - Configurações (via STORAGE wrapper → chrome.storage.sync)
  * - Export/Import
  */
 
@@ -27,8 +27,18 @@
   const saveStatus = $('save-status');
   const templatesContainer = $('templates-container');
 
+  // ─── GATE: STORAGE wrapper ───────────────────────────────────────
+  function checkStorage() {
+    if (typeof STORAGE === 'undefined') {
+      showSaveStatus('❌ Erro: módulo de armazenamento não carregado.', 'warning');
+      return false;
+    }
+    return true;
+  }
+
   // ─── INICIALIZAÇÃO ──────────────────────────────────────────────
   document.addEventListener('DOMContentLoaded', async () => {
+    if (!checkStorage()) return;
     await loadProfiles();
     loadSettings();
     setupTabs();
@@ -37,27 +47,26 @@
 
   // ─── CARREGA PERFIS ────────────────────────────────────────────
   async function loadProfiles() {
-    return new Promise((resolve) => {
-      chrome.storage.sync.get(['profiles', 'activeProfileId'], async (result) => {
-        currentProfiles = result.profiles || [];
-        currentProfileId = result.activeProfileId || null;
+    try {
+      currentProfiles = await STORAGE.getProfiles();
+      currentProfileId = await STORAGE.getActiveProfileId();
 
-        renderProfileList();
-        
-        if (currentProfileId) {
-          const profile = currentProfiles.find(p => p.id === currentProfileId);
-          if (profile) {
-            renderProfileForm(profile);
-          } else if (currentProfiles.length > 0) {
-            switchProfile(currentProfiles[0].id);
-          }
+      renderProfileList();
+
+      if (currentProfileId) {
+        const profile = currentProfiles.find(p => p.id === currentProfileId);
+        if (profile) {
+          renderProfileForm(profile);
         } else if (currentProfiles.length > 0) {
-          switchProfile(currentProfiles[0].id);
+          await switchProfile(currentProfiles[0].id);
         }
-
-        resolve();
-      });
-    });
+      } else if (currentProfiles.length > 0) {
+        await switchProfile(currentProfiles[0].id);
+      }
+    } catch (err) {
+      console.error('[PreenchimentoRapido] Erro ao carregar perfis:', err);
+      showSaveStatus('❌ Erro ao carregar dados.', 'warning');
+    }
   }
 
   function renderProfileList() {
@@ -107,7 +116,7 @@
   async function switchProfile(id) {
     currentProfileId = id;
     profileList.value = id;
-    await chrome.storage.sync.set({ activeProfileId: id });
+    await STORAGE.setActiveProfileId(id);
 
     const profile = currentProfiles.find(p => p.id === id);
     if (profile) renderProfileForm(profile);
@@ -130,10 +139,10 @@
     };
 
     currentProfiles.push(newProfile);
-    await chrome.storage.sync.set({ profiles: currentProfiles });
+    await STORAGE.saveProfiles(currentProfiles);
     await switchProfile(newProfile.id);
     renderProfileList();
-    
+
     // Foca no nome do perfil
     fieldLabel.focus();
     fieldLabel.select();
@@ -150,7 +159,7 @@
     clone.updatedAt = new Date().toISOString();
 
     currentProfiles.push(clone);
-    await chrome.storage.sync.set({ profiles: currentProfiles });
+    await STORAGE.saveProfiles(currentProfiles);
     await switchProfile(clone.id);
     renderProfileList();
     showSaveStatus('📋 Perfil duplicado!', 'info');
@@ -167,7 +176,7 @@
     }
 
     currentProfiles = currentProfiles.filter(p => p.id !== currentProfileId);
-    await chrome.storage.sync.set({ profiles: currentProfiles });
+    await STORAGE.saveProfiles(currentProfiles);
 
     if (currentProfiles.length > 0) {
       await switchProfile(currentProfiles[0].id);
@@ -191,20 +200,17 @@
       if (!label) {
         showSaveStatus('⚠️ Defina um nome para o perfil.', 'warning');
         fieldLabel.focus();
-        isSaving = false;
         return;
       }
 
       const profile = currentProfiles.find(p => p.id === currentProfileId);
       if (!profile) {
         showSaveStatus('⚠️ Nenhum perfil selecionado.', 'warning');
-        isSaving = false;
         return;
       }
 
       if (typeof FIELD_DICTIONARY === 'undefined') {
         showSaveStatus('❌ Erro: dicionário de campos não carregado.', 'warning');
-        isSaving = false;
         return;
       }
 
@@ -233,7 +239,7 @@
       profile.templates = templates;
       profile.updatedAt = new Date().toISOString();
 
-      await chrome.storage.sync.set({ profiles: currentProfiles });
+      await STORAGE.saveProfiles(currentProfiles);
       renderProfileList();
       showSaveStatus('✅ Salvo!', 'success');
     } catch (err) {
@@ -273,7 +279,7 @@
 
   function addTemplateRow(template) {
     const tpl = template || { id: 'tpl_' + Date.now().toString(36), name: '', content: '' };
-    
+
     const div = document.createElement('div');
     div.className = 'template-item';
     div.dataset.id = tpl.id;
@@ -297,7 +303,7 @@
     if (emptyMsg && !template) {
       templatesContainer.innerHTML = '';
     }
-    
+
     templatesContainer.appendChild(div);
   }
 
@@ -306,39 +312,37 @@
     const historyList = $('history-list');
     const countEl = $('history-count');
 
-    return new Promise((resolve) => {
-      chrome.storage.local.get('applications', (result) => {
-        const apps = result.applications || [];
-        countEl.textContent = `${apps.length} candidatura${apps.length !== 1 ? 's' : ''}`;
+    try {
+      const apps = await STORAGE.getApplications();
+      countEl.textContent = `${apps.length} candidatura${apps.length !== 1 ? 's' : ''}`;
 
-        if (apps.length === 0) {
-          historyList.innerHTML = '<div class="empty-state">Nenhuma candidatura registrada ainda.</div>';
-          resolve();
-          return;
-        }
+      if (apps.length === 0) {
+        historyList.innerHTML = '<div class="empty-state">Nenhuma candidatura registrada ainda.</div>';
+        return;
+      }
 
-        historyList.innerHTML = apps.map(app => {
-          const date = new Date(app.date);
-          const dateStr = date.toLocaleDateString('pt-BR', {
-            day: '2-digit', month: '2-digit', year: '2-digit',
-            hour: '2-digit', minute: '2-digit'
-          });
-          const domain = extractDomain(app.url);
-          return `
-            <div class="history-item">
-              <div class="h-title">${escapeHtml(app.title || domain)}</div>
-              <div class="h-meta">
-                <span>${dateStr}</span>
-                <span>${app.filled}/${app.total} campos</span>
-                <span class="h-profile">${escapeHtml(app.profileLabel || '')}</span>
-              </div>
+      historyList.innerHTML = apps.map(app => {
+        const date = new Date(app.date);
+        const dateStr = date.toLocaleDateString('pt-BR', {
+          day: '2-digit', month: '2-digit', year: '2-digit',
+          hour: '2-digit', minute: '2-digit'
+        });
+        const domain = extractDomain(app.url);
+        return `
+          <div class="history-item">
+            <div class="h-title">${escapeHtml(app.title || domain)}</div>
+            <div class="h-meta">
+              <span>${dateStr}</span>
+              <span>${app.filled}/${app.total} campos</span>
+              <span class="h-profile">${escapeHtml(app.profileLabel || '')}</span>
             </div>
-          `;
-        }).join('');
-
-        resolve();
-      });
-    });
+          </div>
+        `;
+      }).join('');
+    } catch (err) {
+      console.error('[PreenchimentoRapido] Erro ao carregar histórico:', err);
+      historyList.innerHTML = '<div class="empty-state">Erro ao carregar histórico.</div>';
+    }
   }
 
   function extractDomain(url) {
@@ -347,55 +351,50 @@
 
   async function clearHistory() {
     if (!confirm('Limpar todo o histórico de candidaturas?')) return;
-    await chrome.storage.local.set({ applications: [] });
+    await STORAGE.clearApplications();
     await loadHistory();
     showSaveStatus('🧹 Histórico limpo!', 'info');
   }
 
   // ─── CONFIGURAÇÕES ─────────────────────────────────────────────
-  function loadSettings() {
-    chrome.storage.sync.get('settings', (result) => {
-      const s = result.settings || {};
+  async function loadSettings() {
+    try {
+      const s = await STORAGE.getSettings();
       $('s-autoFill').checked = s.autoFill || false;
       $('s-showFloatingButton').checked = s.showFloatingButton !== false;
       $('s-confirmBeforeFill').checked = s.confirmBeforeFill !== false;
       $('s-fillDelay').value = s.fillDelay || 50;
       $('s-delay-value').textContent = s.fillDelay || 50;
-    });
+    } catch (err) {
+      console.error('[PreenchimentoRapido] Erro ao carregar configurações:', err);
+    }
   }
 
   async function saveSetting(key, value) {
-    chrome.storage.sync.get('settings', (result) => {
-      const settings = result.settings || {};
+    try {
+      const settings = await STORAGE.getSettings();
       settings[key] = value;
-      chrome.storage.sync.set({ settings });
-    });
+      await STORAGE.saveSettings(settings);
+    } catch (err) {
+      console.error('[PreenchimentoRapido] Erro ao salvar configuração:', err);
+    }
   }
 
   // ─── EXPORT / IMPORT ───────────────────────────────────────────
   async function exportData() {
-    const data = await new Promise(resolve => {
-      chrome.storage.sync.get(null, (sync) => {
-        chrome.storage.local.get('applications', (local) => {
-          resolve({
-            version: '1.0.0',
-            exportedAt: new Date().toISOString(),
-            profiles: sync.profiles || [],
-            activeProfileId: sync.activeProfileId || null,
-            settings: sync.settings || null,
-            applications: local.applications || []
-          });
-        });
-      });
-    });
-
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `preenchimento-rapido-backup-${new Date().toISOString().slice(0, 10)}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
+    try {
+      const data = await STORAGE.exportAll();
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `preenchimento-rapido-backup-${new Date().toISOString().slice(0, 10)}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      showSaveStatus('📤 Dados exportados!', 'success');
+    } catch (err) {
+      showSaveStatus('❌ Erro ao exportar.', 'warning');
+    }
   }
 
   function importData() {
@@ -411,14 +410,11 @@
       const data = JSON.parse(text);
 
       if (!data.profiles) {
-        alert('Arquivo inválido: campos "profiles" não encontrados.');
+        alert('Arquivo inválido: campo "profiles" não encontrado.');
         return;
       }
 
-      if (data.profiles) await chrome.storage.sync.set({ profiles: data.profiles });
-      if (data.activeProfileId) await chrome.storage.sync.set({ activeProfileId: data.activeProfileId });
-      if (data.settings) await chrome.storage.sync.set({ settings: data.settings });
-      if (data.applications) await chrome.storage.local.set({ applications: data.applications });
+      await STORAGE.importAll(data);
 
       await loadProfiles();
       loadSettings();
@@ -472,7 +468,7 @@
       $('view-settings').classList.add('active');
     });
 
-    // Settings toggles
+    // Settings toggles (com debounce implícito — salvam em cada change)
     $('s-autoFill').addEventListener('change', (e) => saveSetting('autoFill', e.target.checked));
     $('s-showFloatingButton').addEventListener('change', (e) => saveSetting('showFloatingButton', e.target.checked));
     $('s-confirmBeforeFill').addEventListener('change', (e) => saveSetting('confirmBeforeFill', e.target.checked));
@@ -507,11 +503,11 @@
 
   function showSaveStatus(msg, type = 'info') {
     saveStatus.textContent = msg;
-    saveStatus.style.color = 
+    saveStatus.style.color =
       type === 'success' ? 'var(--success)' :
       type === 'warning' ? 'var(--warning)' :
       'var(--text-secondary)';
-    
+
     clearTimeout(saveStatus._timeout);
     saveStatus._timeout = setTimeout(() => {
       saveStatus.textContent = '';

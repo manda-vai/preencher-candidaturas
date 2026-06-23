@@ -34,6 +34,20 @@
       subtree: true
     });
 
+    // Auto-fill: se configurado, preenche automaticamente ao carregar
+    setTimeout(async () => {
+      try {
+        const settings = await STORAGE.getSettings();
+        if (settings.autoFill) {
+          // Pequeno delay extra pra garantir que o formulário carregou
+          await sleep(800);
+          await fillCurrentForm();
+        }
+      } catch (e) {
+        // Silencioso — auto-fill é um extra, não crítico
+      }
+    }, 2500);
+
     // Escuta comandos do background
     chrome.runtime.onMessage.addListener(handleMessage);
   }
@@ -46,9 +60,18 @@
     return forms.length >= 3;
   }
 
-  function setupFloatingButton() {
+  async function setupFloatingButton() {
     if (floatingButton) return;
     if (!shouldShowButton()) return;
+
+    // Verifica configuração: botão só aparece se showFloatingButton ativado
+    try {
+      const settings = await STORAGE.getSettings();
+      if (!settings.showFloatingButton) return;
+    } catch (e) {
+      // Se STORAGE não estiver disponível, segue com padrão (mostrar)
+      console.warn('[PreenchimentoRapido] STORAGE não disponível, mostrando botão.', e);
+    }
 
     floatingButton = document.createElement('div');
     floatingButton.id = 'preenchimento-rapido-btn';
@@ -129,14 +152,14 @@
 
     try {
       // 1. Pega o perfil ativo
-      const profile = await getActiveProfile();
+      const profile = await STORAGE.getActiveProfile();
       if (!profile) {
         showToast('Nenhum perfil ativo. Configure no popup da extensão.', 'warning');
         return;
       }
 
       // 2. Pega configurações
-      const settings = await getSettings();
+      const settings = await STORAGE.getSettings();
 
       // 3. Detecta campos
       const fields = FieldMatcher.detectFields();
@@ -147,36 +170,38 @@
 
       // 4. Expande dados do perfil com fallbacks inteligentes
       const fillData = { ...profile.data };
-      
-      // Fallback: se tem nome+sobrenome mas não nomeCompleto, combina
+
+      // Fallback: nome+sobrenome → nomeCompleto
       if (!fillData.nomeCompleto && fillData.nome && fillData.sobrenome) {
         fillData.nomeCompleto = `${fillData.nome} ${fillData.sobrenome}`.trim();
       }
-      // Fallback: se tem nomeCompleto mas não nome, tenta extrair primeiro nome
+      // Fallback: nomeCompleto → nome (primeiro nome)
       if (!fillData.nome && fillData.nomeCompleto) {
         const parts = fillData.nomeCompleto.trim().split(/\s+/);
         if (parts.length > 0) fillData.nome = parts[0];
       }
-      // Fallback: se tem nomeCompleto mas não sobrenome, tenta extrair
+      // Fallback: nomeCompleto → sobrenome
       if (!fillData.sobrenome && fillData.nomeCompleto) {
         const parts = fillData.nomeCompleto.trim().split(/\s+/);
         if (parts.length > 1) fillData.sobrenome = parts.slice(1).join(' ');
       }
 
-      // 5. Preview se configurado
+      // 5. Expande com templates para textareas sem dado
+      expandWithTemplates(fillData, fields, profile.templates);
+
+      // 6. Preview se configurado
       if (settings.confirmBeforeFill) {
         const confirmed = await showFillPreview(fields, fillData);
         if (!confirmed) return;
       }
 
-      // 6. Preenche
+      // 7. Preenche campos
       let filledCount = 0;
       for (const field of fields) {
         const key = field.bestMatch.key;
         const value = fillData[key];
-        
+
         if (value !== undefined && value !== null && value !== '') {
-          // Delay entre campos pra evitar detecção anti-bot
           if (settings.fillDelay > 0) {
             await sleep(settings.fillDelay);
           }
@@ -185,8 +210,8 @@
         }
       }
 
-      // 6. Registra no histórico
-      await recordApplication(filledCount, fields.length);
+      // 7. Registra no histórico
+      await recordApplication(filledCount, fields.length, profile);
 
       showToast(
         `✅ ${filledCount} de ${fields.length} campos preenchidos com "${profile.label}"`,
@@ -201,52 +226,19 @@
     }
   }
 
-  // ─── PERFIL E CONFIG (bridge) ───────────────────────────────────
-  function getActiveProfile() {
-    return new Promise((resolve) => {
-      chrome.storage.sync.get(['profiles', 'activeProfileId'], (result) => {
-        const profiles = result.profiles || [];
-        const activeId = result.activeProfileId;
-        const profile = profiles.find(p => p.id === activeId) || profiles[0] || null;
-        resolve(profile);
-      });
-    });
-  }
-
-  function getSettings() {
-    return new Promise((resolve) => {
-      chrome.storage.sync.get('settings', (result) => {
-        const defaults = {
-          autoFill: false,
-          showFloatingButton: true,
-          fillDelay: 50,
-          confirmBeforeFill: true
-        };
-        resolve({ ...defaults, ...(result.settings || {}) });
-      });
-    });
-  }
-
   // ─── HISTÓRICO ──────────────────────────────────────────────────
-  async function recordApplication(filled, total) {
+  async function recordApplication(filled, total, profile) {
     try {
-      const profile = await getActiveProfile();
-      await chrome.storage.local.get('applications', (result) => {
-        const apps = result.applications || [];
-        apps.unshift({
-          id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
-          url: window.location.href,
-          title: document.title,
-          profileLabel: profile ? profile.label : 'Desconhecido',
-          filled,
-          total,
-          date: new Date().toISOString()
-        });
-        if (apps.length > 200) apps.length = 200;
-        chrome.storage.local.set({ applications: apps });
+      await STORAGE.saveApplication({
+        url: window.location.href,
+        title: document.title,
+        profileLabel: profile ? profile.label : 'Desconhecido',
+        filled,
+        total
       });
     } catch (e) {
       // Silencioso — histórico não é crítico
+      console.warn('[PreenchimentoRapido] Erro ao salvar histórico:', e);
     }
   }
 
@@ -392,6 +384,78 @@
         }
       });
     });
+  }
+
+  // ─── TEMPLATES DE RESPOSTA ──────────────────────────────────────
+  /** Renderiza variáveis {nome} {vaga} {empresa} no texto do template */
+  function renderTemplateText(template, data) {
+    let text = template.content || '';
+    // Ordem das substituições: mais específicas primeiro
+    const vars = {
+      nomeCompleto: data.nomeCompleto || `${data.nome || ''} ${data.sobrenome || ''}`.trim(),
+      nome: data.nome || '',
+      sobrenome: data.sobrenome || '',
+      email: data.email || '',
+      telefone: data.telefone || '',
+      vaga: '',
+      empresa: ''
+    };
+    for (const [key, value] of Object.entries(vars)) {
+      text = text.replace(new RegExp(`\\{${key}\\}`, 'gi'), value || '');
+    }
+    // Fallback para {vaga} e {empresa} — tenta extrair do título da página
+    if (text.includes('{vaga}')) {
+      const vaga = extractJobTitle() || '';
+      text = text.replace(/\{vaga\}/gi, vaga);
+    }
+    if (text.includes('{empresa}')) {
+      text = text.replace(/\{empresa\}/gi, '');
+    }
+    return text;
+  }
+
+  /** Tenta extrair título da vaga do DOM */
+  function extractJobTitle() {
+    const selectors = [
+      'h1[class*="job"]', 'h1[class*="title"]', 'h1[class*="position"]',
+      '[class*="job-title"]', '[class*="position-title"]', '[class*="vaga-title"]',
+      'h2[class*="job"]', 'h2[class*="title"]'
+    ];
+    for (const sel of selectors) {
+      const el = document.querySelector(sel);
+      if (el?.textContent?.trim()) return el.textContent.trim().slice(0, 120);
+    }
+    // Tenta pelo <title>
+    const title = document.title;
+    if (title && !title.includes(' - ') && title.length < 100) return title;
+    return '';
+  }
+
+  /** Expande fillData com templates para campos textarea sem valor */
+  function expandWithTemplates(fillData, fields, templates) {
+    if (!templates || templates.length === 0) return;
+    if (!fillData) return;
+
+    // Encontra campos textarea no formulário que estão sem dado
+    const textareaFields = fields.filter(f => {
+      const key = f.bestMatch.key;
+      const entry = FIELD_MAP[key];
+      const val = fillData[key];
+      return entry?.type === 'textarea' && (!val || val.trim() === '');
+    });
+
+    if (textareaFields.length === 0 || templates.length === 0) return;
+
+    // Usa o primeiro template para preencher textareas vazios
+    const template = templates[0];
+    if (!template?.content) return;
+
+    const rendered = renderTemplateText(template, fillData);
+    if (!rendered) return;
+
+    for (const tf of textareaFields) {
+      fillData[tf.bestMatch.key] = rendered;
+    }
   }
 
   // ─── UTILITIES ──────────────────────────────────────────────────

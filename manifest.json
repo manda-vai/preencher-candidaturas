@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Preenchimento Rápido - Candidaturas",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Preenche automaticamente formulários de candidatura em sites como InHire, Gupy, 99Jobs, Solides, Recrut.AI e outros.",
   "author": "HermesCoder",
   "homepage_url": "https://github.com/manda-vai/preencher-candidaturas",
@@ -28,6 +28,7 @@
       "matches": ["<all_urls>"],
       "js": [
         "lib/field-dictionary.js",
+        "lib/storage.js",
         "content/field-matcher.js",
         "content/content.js"
       ],
