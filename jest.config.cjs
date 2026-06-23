@@ -8,7 +8,7 @@
  */
 module.exports = {
   testEnvironment: 'node',
-  setupFiles: ['./__tests__/setup.js'],
+  setupFiles: ['./tests/setup.js'],
   transform: {},
-  testPathIgnorePatterns: ['./__tests__/setup.js'],
+  testPathIgnorePatterns: ['./tests/setup.js'],
 };
